@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Segment Anything Webapp</title>
+    <style>
+        /* Basic reset / layout */
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: Arial, sans-serif;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: row;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+        }
+
+        .left-panel {
+            width: 25%;
+            min-width: 150px;
+            max-width: 300px;
+            background: #f5f5f5;
+            border-right: 1px solid #ccc;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow-y: auto;
+            overflow-wrap: break-word;
+        }
+
+        .embed-container {
+            width: 100%;
+            height: 50%;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .url-input-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .url-input-container input {
+            flex: 1;
+            padding: 8px;
+        }
+
+        .url-input-container button {
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+
+        .mid-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding: 10px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        /* New style for the image name */
+        #imageName {
+            margin-bottom: 10px;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .right-panel {
+            width: 10%;
+            min-width: 200px;
+            max-width: 300px;
+            background: #fafafa;
+            border-left: 1px solid #ccc;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow-y: auto;
+        }
+
+        .canvas-container {
+            width: 100%;
+            /* max-width: 1000px; */
+            height: 85%;
+            border: 1px solid #ffffff;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #mainCanvas {
+            /* background: #000; */
+            display: block;
+            cursor: grab;
+            border: 1px solid #ffffff
+                /* for panning */
+        }
+
+        button {
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+
+        ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        li {
+            padding: 5px 0;
+            cursor: pointer;
+            border-bottom: 1px solid #ddd;
+        }
+
+        li:hover {
+            background-color: #eee;
+        }
+
+        /* Points styling (drawn on the canvas in code, but here's a simple color reference) */
+        .point-foreground {
+            color: green;
+        }
+
+        .point-background {
+            color: red;
+        }
+
+        /* Masks styling in right panel when selected or unselected. (We'll manage highlights in the canvas though.) */
+        .mask-list-item {
+            padding: 5px;
+        }
+
+        .mask-list-item.selected {
+            background-color: #cce0ff;
+            /* just a highlight color */
+        }
+
+        /* Responsive for small screens */
+        @media (max-width: 600px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .left-panel,
+            .right-panel {
+                width: 100%;
+                height: 30%;
+            }
+
+            .mid-panel {
+                height: 40%;
+            }
+
+            .canvas-container {
+                width: 90%;
+                height: 60%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+
+        <!-- LEFT PANEL: List of images -->
+        <div class="left-panel">
+            <div class="embed-container">
+                <iframe id="webpageFrame" src="drops" width="100%" height="100%"></iframe>
+            </div>
+            <div class="url-input-container">
+                <input type="text" id="urlInput" placeholder="Enter path, e.g., /labdaq/data/folder1" />
+                <button onclick="updateWebpageUrl()">Go!</button>
+            </div>
+        </div>
+
+        <!-- MID PANEL: Image name, Canvas & Buttons -->
+        <div class="mid-panel">
+            <!-- Display the image name above the canvas -->
+            <h3 id="imageName">No image selected</h3>
+            <div class="canvas-container">
+                <canvas id="mainCanvas"></canvas>
+            </div>
+            <div class="buttons">
+                <button id="btnSingleMask">Get Single Mask</button>
+                <button id="btnUndoPoint">Undo Last Point</button>
+                <button id="btnAutoMasks">Auto Generate Masks</button>
+                <button id="btnSaveMasks">Save Masks</button>
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL: List of masks -->
+        <div class="right-panel">
+            <h3>Masks</h3>
+            <button id="selectAllMasks">Select all masks</button>
+            <button id="unselectAllMasks">Unselect all masks</button>
+            <ul id="maskList"></ul>
+        </div>
+    </div>
+
+    <!-- Bottom left controls: Remove SEM Banner checkbox and Reset view button -->
+    <div id="bottomLeftControls"
+        style="position: fixed; left: 10px; bottom: 10px; background: #fff; padding: 10px; border: 1px solid #ccc;">
+        <input type="checkbox" id="removeSemBanner" onchange="toggleSemBanner(this)">
+        <label for="removeSemBanner">Remove SEM Banner</label>
+        <br>
+        <button onclick="resetView()">Reset view</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+    <script>
+        // =======================================================================
+        //                           GLOBAL VARIABLES
+        // =======================================================================
+        const canvas = document.getElementById("mainCanvas");
+        const ctx = canvas.getContext("2d");
+
+        const DROPS_URL = 'drops_page.html'
+
+        let currentImgPath = null;   // Contains path like /labdaq/data/folder1/ 
+        let currentImgName = null;   // Contains image name like 'sem_image.tiff'
+        let currentFullPath = null;  // Contains full path like /labdaq/data/folder1/sem_image.tiff
+        let img = new Image(); // loaded image
+        const acceptedFormats = ['jpg', 'jpeg', 'png', 'tiff']
+        // Pan/zoom
+        let scale = 1.0;
+        let minScale = 1.0
+        let offsetX = 0;
+        let offsetY = 0;
+        let isDragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+
+        let lastDrawn = Date.now();
+        const drawCooloff = 30;
+        const overlayCanvas = document.createElement("canvas");
+        // SHIFT-click points
+        // Each time SHIFT+click: we add a point to inputPoints
+        // The corresponding label (1=foreground, 0=background) to inputLabels
+        let inputPoints = [];
+        let inputLabels = [];
+
+        // We'll store all masks in an array. Each mask object might look like:
+        // { id: 0, data: [0/1 array in flattened form], selected: bool }
+        let allMasks = [];
+        let maskCounter = 0;
+
+        // For convenience, store mouse position
+        let mx = 0, my = 0;
+
+        // Backend session ID (if you are using the session-based approach)
+        let sessionId = null;
+        setMaskButtons(false);
+
+        // =======================================================================
+        //                            INIT & LAYOUT
+        // =======================================================================
+        function resizeCanvas() {
+            const container = document.querySelector(".canvas-container");
+            const rect = container.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            draw();
+        }
+        window.addEventListener("resize", resizeCanvas);
+
+        window.addEventListener("contextmenu", function (e) {
+            // Prevent default context menu so we can handle right-click for background points
+            e.preventDefault();
+        });
+
+        window.onload = () => {
+            console.log('Window loaded...')
+            setupUI();
+            resizeCanvas();
+        };
+
+        function setupUI() {
+            console.log('Setting up UI...')
+            // Button handlers
+            document.getElementById("btnSingleMask").onclick = onGetSingleMask;
+            document.getElementById("btnUndoPoint").onclick = onUndoPoint;
+            document.getElementById("btnAutoMasks").onclick = onAutoMasks;
+            document.getElementById("btnSaveMasks").onclick = onSaveMasks;
+            // Add event listeners for the new buttons
+            document.getElementById("selectAllMasks").addEventListener("click", selectAllMasks);
+            document.getElementById("unselectAllMasks").addEventListener("click", unselectAllMasks);
+        }
+
+        window.addEventListener('message', function (event) {
+            // Check the origin of the message if needed
+            if (event.data.type === 'fileClicked') {
+                const imgPath = event.data.filePath;
+                filetype = imgPath.split('.').pop();
+                console.log('a' + filetype + 'b')
+                console.log('filetype is ', filetype, 'it is in ', acceptedFormats, ' : ', filetype in acceptedFormats);
+                if (acceptedFormats.includes(filetype)) {
+                    console.log('Correct filetype, loading image...')
+                    selectImage(imgPath, removeBanner = false);
+                }
+            }
+        });
+
+        // =======================================================================
+        //                           IMAGE SELECTION
+        // =======================================================================
+        async function selectImage(imgPath, removeBanner) {
+            console.log(`New image selected. Img path is ${imgPath} Releasing session `, sessionId)
+            console.log('removeBanner is ', removeBanner)
+            const pathParts = imgPath.split('/').slice(1).filter(part => part !== '');
+            currentFullPath = '/' + pathParts.join('/');
+            currentImgName = pathParts.pop();
+            currentImgPath = '/' + pathParts.join('/');
+            // Update the image name display above the canvas
+            document.getElementById("imageName").textContent = currentImgName;
+            console.log(`New image loaded from URL ${imgPath}. Img name is ${currentImgName}, img path is ${currentImgPath} and full path is ${currentFullPath}.`)
+            setMaskButtons(false);
+            await releaseCurrentSession();
+            allMasks = [];
+            maskCounter = 0;
+            updateMaskListUI()
+            updateMaskCanvas()
+            // Load image in JS
+            img.src = "/images" + currentFullPath;
+            console.log('image src is ', img.src)
+            img.onload = () => {
+                console.log('Image loaded, shape=', img.height, img.width)
+                let scaleX = canvas.width / img.width;
+                let scaleY = canvas.height / img.height;
+                scale = Math.min(scaleX, scaleY);
+                offsetX = (canvas.width - img.width * scale) / 2;
+                offsetY = (canvas.height - img.height * scale) / 2;
+                minScale = scale;
+                draw();
+            };
+            loadMasks(currentImgName);
+            resetView();
+            console.log('img path: ', currentImgPath)
+            const payload = { image_path: currentFullPath };
+            console.log('Waiting to get session ID (image embedding)...');
+            const resp = await fetch("/init_session_front", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            sessionId = data.session_id;
+            console.log("Got sessionId:", sessionId);
+            setMaskButtons(true);
+        }
+
+        function resetView() {
+            let scaleX = canvas.width / img.width;
+            let scaleY = canvas.height / img.height;
+            scale = Math.min(scaleX, scaleY);
+            offsetX = (canvas.width - img.width * scale) / 2;
+            offsetY = (canvas.height - img.height * scale) / 2;
+            minScale = scale;
+            isDragging = false;
+            inputPoints = [];
+            inputLabels = [];
+            draw();
+        }
+
+        // =======================================================================
+        //             NEW FUNCTION: Toggle SEM Banner Visibility
+        // =======================================================================
+
+        function toggleSemBanner(checkbox) {
+            let message = checkbox.checked
+                ? "If you proceed, all current masks will be removed. You should save changes before continuing. Do you want to continue?"
+                : "If you proceed, all current masks will be removed. You should save changes before continuing. Do you want to continue?";
+            // Show native confirmation dialog
+            if (window.confirm(message)) {
+                // User clicked OK ("Continue")
+                if (checkbox.checked) {
+                    selectImage(currentFullPath, removeBanner = true);
+                } else {
+                    selectImage(currentFullPath, removeBanner = true);
+                }
+            } else {
+                // User clicked Cancel; revert checkbox state
+                checkbox.checked = !checkbox.checked;
+            }
+        }
+
+        // =======================================================================
+        //                           MOUSE EVENTS
+        // =======================================================================
+        canvas.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            [mx, my] = getMousePosCanvas(e);
+
+            if (e.shiftKey) {
+                // SHIFT+click => define a segmentation point
+                const imagePos = screenToImage(mx, my);
+
+                if (e.button === 0) {
+                    // Left click => foreground
+                    inputPoints.push([imagePos[0], imagePos[1]]);
+                    inputLabels.push(1);
+                    console.log("Added foreground point", imagePos);
+                } else if (e.button === 2) {
+                    // Right click => background
+                    inputPoints.push([imagePos[0], imagePos[1]]);
+                    inputLabels.push(0);
+                    console.log("Added background point", imagePos);
+                }
+
+                draw(); // so we can visualize the points
+                return; // Don’t start panning
+            }
+
+            // Normal click => panning
+            isDragging = true;
+            dragStartX = mx - offsetX;
+            dragStartY = my - offsetY;
+            canvas.style.cursor = "grabbing";
+        });
+
+        document.addEventListener("keydown", (e) => {
+            console.log('Pressed ', e.key, e.keyCode)
+            if (e.key === "Delete" || e.keyCode === 46) {
+                console.log('Deleting selected masks..')
+                deleteSelectedMasks();
+            }
+        });
+
+        canvas.addEventListener("mousemove", (e) => {
+            [mx, my] = getMousePosCanvas(e);
+            if (isDragging) {
+                offsetX = mx - dragStartX;
+                offsetY = my - dragStartY;
+                draw();
+            }
+        });
+
+        canvas.addEventListener("mouseup", () => {
+            isDragging = false;
+            canvas.style.cursor = "grab";
+        });
+
+        // Zoom with mouse wheel
+        canvas.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            const zoomFactor = 1.1;
+            [mx, my] = getMousePosCanvas(e);
+            const worldBefore = screenToImage(mx, my);
+
+            if (e.deltaY < 0) {
+                // zoom in
+                scale *= zoomFactor;
+            } else {
+                // zoom out
+                scale /= zoomFactor;
+            }
+            if (scale < minScale) {
+                scale = minScale;
+            }
+            // Keep the mouse position stable
+            const [sx, sy] = applyTransform(worldBefore[0], worldBefore[1]);
+            offsetX += (mx - sx);
+            offsetY += (my - sy);
+
+            draw();
+        }, { passive: false });
+
+        // =======================================================================
+        //                           DRAWING
+        // =======================================================================
+        function deleteSelectedMasks() {
+            let indexesToDelete = [];
+            console.log('Masks before deletion: ', allMasks);
+            for (let m = 0; m < allMasks.length; m++) {
+                const maskObj = allMasks[m];
+                if (maskObj.selected) {
+                    indexesToDelete.push(m);
+                }
+            }
+            console.log(`Deleting ${indexesToDelete.length} masks with indexes ${indexesToDelete}.`)
+            for (let i = indexesToDelete.length - 1; i >= 0; i--) {
+                allMasks.splice(indexesToDelete[i], 1);
+            }
+            console.log('Masks after deletion: ', allMasks);
+            updateMaskListUI();
+            updateMaskCanvas();
+            draw();
+        }
+
+        function draw() {
+            if (Date.now() - lastDrawn < drawCooloff) {
+                return;
+            }
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Transform
+            ctx.save();
+            ctx.translate(offsetX, offsetY);
+            ctx.scale(scale, scale);
+
+            // Draw image
+            if (img.complete && img.width > 0) {
+                ctx.fillStyle = "red";
+                ctx.fillRect(0, 0, canvas.width, canvas.height)
+                ctx.drawImage(img, 0, 0);
+            }
+
+            // Draw SHIFT+click points
+            // Foreground = green, background = red
+            for (let i = 0; i < inputPoints.length; i++) {
+                const pt = inputPoints[i];
+                const lbl = inputLabels[i];
+                ctx.beginPath();
+                ctx.arc(pt[0], pt[1], 5, 0, 2 * Math.PI);
+                if (lbl === 1) {
+                    ctx.fillStyle = "green";
+                } else {
+                    ctx.fillStyle = "red";
+                }
+                ctx.fill();
+            }
+
+            // Draw all masks
+            if (img.complete && img.width > 0) {
+                overlayMasks();
+            }
+            ctx.restore();
+            lastDrawn = Date.now()
+        }
+
+        // Suppose you've drawn the image on mainCanvas. Now overlay the masks.
+        function updateMaskCanvas() {
+            console.log('Updating mask canvas...')
+            if (!(img.complete && img.width > 0)) {
+                console.log('Image incomplete. Returning...')
+                return;
+            }
+            overlayCanvas.width = img.width;
+            overlayCanvas.height = img.height;
+            const overlayCtx = overlayCanvas.getContext("2d");
+            // 2) Fill each mask pixel on the overlay
+            //    For each mask, pick a color + alpha, then fillRect for each pixel=1
+            const alpha = 0.3
+            const color = `rgba(0, 255, 0, ${alpha})`;   // e.g. green overlay
+            overlayCtx.fillStyle = color;
+            for (let m = 0; m < allMasks.length; m++) {
+                const mask = allMasks[m];
+                if (mask.selected) {
+                    for (let i = 0; i < mask.segmentation.length; i++) {
+                        // compute x,y from p
+                        // console.log('Drawing a pixel.')
+                        pixel = mask.segmentation[i]
+                        const x = pixel % img.width;
+                        const y = Math.floor(pixel / img.width);
+                        overlayCtx.fillRect(x, y, 1, 1);  // color that pixel
+                    }
+                }
+            }
+        }
+
+        function overlayMasks() {
+            ctx.drawImage(overlayCanvas, 0, 0);
+        }
+
+        function updateWebpageUrl() {
+            let userInput = document.getElementById("urlInput").value;
+            console.log('Detected user input: ', userInput)
+            //const fullUrl = DROPS_URL + userInput;
+            if (!userInput.startsWith('drops')) {
+                userInput = 'drops' + userInput
+            }
+            console.log('Navigating to ', userInput)
+            document.getElementById("webpageFrame").src = userInput;
+        }
+
+        // =======================================================================
+        //                         BUTTON HANDLERS
+        // =======================================================================
+        function setMaskButtons(val) {
+            console.log('Setting buttons to ', val)
+            document.getElementById("btnSingleMask").disabled = !val;
+            document.getElementById("btnUndoPoint").disabled = !val;
+            document.getElementById("btnAutoMasks").disabled = !val;
+            document.getElementById("btnSaveMasks").disabled = !val;
+        }
+
+        function selectAllMasks() {
+            allMasks.forEach(mask => mask.selected = true);
+            updateMaskListUI();
+            updateMaskCanvas();
+            draw();
+        }
+
+        function unselectAllMasks() {
+            allMasks.forEach(mask => mask.selected = false);
+            updateMaskListUI();
+            updateMaskCanvas();
+            draw();
+        }
+
+        async function onGetSingleMask() {
+            if (!currentImgName) {
+                alert("No image selected!");
+                return;
+            }
+            if (inputPoints.length === 0) {
+                alert("No input points given. SHIFT+Left/Right click on the image!");
+                return;
+            }
+            console.log('onGetSingleMask')
+            setMaskButtons(false);
+            // Example: we call /predict_interactive in the “frontend” service
+            // which in turn calls the “backend” with sessionId or something else.
+            // The request typically includes: session_id, points, labels
+            // This is a placeholder. Adjust to your real endpoint & payload.
+            try {
+                const payload = {
+                    session_id: sessionId,
+                    points: inputPoints,
+                    labels: inputLabels,
+                    multimask: false,
+                    // possibly other params
+                };
+                const resp = await fetch("/predict_interactive", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!resp.ok) {
+                    setMaskButtons(true);
+                    throw new Error(`predict_interactive failed: ${resp.statusText}`);
+                }
+                const data = await resp.json();
+                addReceivedMasks(data);
+                updateMaskListUI();
+                updateMaskCanvas()
+                // Reset the point arrays so user can start fresh
+                inputPoints = [];
+                inputLabels = [];
+                draw();
+            } catch (err) {
+                console.error(err);
+                alert("Error in onGetSingleMask");
+            }
+            setMaskButtons(true);
+        }
+
+        function onUndoPoint() {
+            // Remove the last point/label if any
+            if (inputPoints.length > 0) {
+                inputPoints.pop();
+                inputLabels.pop();
+                draw();
+            }
+        }
+
+        async function onAutoMasks() {
+            if (!currentImgName) {
+                alert("No image selected!");
+                return;
+            }
+            console.log('onAutoMasks')
+            setMaskButtons(false);
+            // Example call to /predict_automatic
+            try {
+                const payload = { session_id: sessionId };
+                const resp = await fetch("/predict_automatic", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!resp.ok) {
+                    setMaskButtons(true);
+                    throw new Error(`predict_automatic failed: ${resp.statusText}`);
+                }
+
+                const data = await resp.json();
+                console.log('Data received: ', data);
+                // Suppose the server returns { masks: [ [0,1,0,1,...], ... ] }
+                // In "auto mask" mode, we expect multiple masks.
+                addReceivedMasks(data);
+                updateMaskListUI();
+                updateMaskCanvas()
+
+            } catch (err) {
+                console.error(err);
+                alert("Error in onAutoMasks");
+            }
+            setMaskButtons(true);
+        }
+
+        async function loadMasks(imageName) {
+            try {
+                // Make a GET request to the backend with the image name as a query parameter
+                const response = await fetch(`/load_masks/${imageName}`);
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load masks: ${response.statusText}`);
+                }
+
+                // Convert response to JSON
+                const data = await response.json();
+
+                // Check if masks were returned
+                if (data.masks.length === 0) {
+                    console.log("No saved masks found for this image.");
+                    allMasks = [];
+                    updateMaskListUI()
+                    updateMaskCanvas()
+                    return;
+                }
+
+                console.log("Masks loaded:", data.masks);
+                addReceivedMasks(data)
+
+                updateMaskListUI();  // Update the right panel list of masks
+                updateMaskCanvas()
+                draw();  // Redraw masks on the canvas
+            } catch (error) {
+                console.error("Error loading masks:", error);
+            }
+        }
+
+        async function onSaveMasks() {
+            if (!currentImgName) {
+                alert("No image selected!");
+                return;
+            }
+            // Example call to /save_masks
+            // Suppose it expects { image_path, masks:[ [0,1,0,1...], ... ] }
+            try {
+                console.log('currentImage: ', currentImgName, '\ncurrentPath: ', currentImgPath)
+                const masks_transfer = allMasks
+                    .filter(m => m.selected)
+                    .map(m => {
+                        const uint8Array = new Uint8Array(m.segmentation.buffer);
+                        const compressed = pako.deflate(uint8Array);
+                        const seg_b64 = uint8ToBase64(compressed);
+                        return {
+                            segmentation: seg_b64,
+                            area: m.area,
+                            point_coords: m.point_coords,
+                            bbox: m.bbox,
+                            crop_box: m.crop_box,
+                            stability_score: m.stability_score,
+                            predicted_iou: m.predicted_iou,
+                            shape: m.shape,
+                        }
+                    });
+                const payload = {
+                    image_name: currentImgName,
+                    image_path: currentImgPath,
+                    masks: masks_transfer,
+                };
+                const resp = await fetch("/save_masks", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!resp.ok) {
+                    throw new Error(`save_masks failed: ${resp.statusText}`);
+                }
+                const result = await resp.json();
+                console.log("Masks saved successfully:", result);
+                alert("Masks saved successfully.");
+            } catch (err) {
+                console.error(err);
+                alert("Error saving masks.");
+            }
+        }
+
+        async function releaseCurrentSession() {
+            if (sessionId) {
+                try {
+                    const response = await fetch("/release_session", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ session_id: sessionId })
+                    });
+                    if (!response.ok) {
+                        console.error(`Failed to release session ${sessionId}:`, response.statusText);
+                    }
+                } catch (err) {
+                    console.error(`Error releasing session ${sessionId}:`, err);
+                }
+            }
+        }
+
+        function base64ToUint8Array(b64) {
+            const binary = atob(b64);
+            const len = binary.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes;
+        }
+        function uint8ToBase64(u8Arr) {
+            let CHUNK_SIZE = 0x8000; // Process in chunks for large arrays
+            let index = 0;
+            let result = '';
+            while (index < u8Arr.length) {
+                const slice = u8Arr.subarray(index, Math.min(index + CHUNK_SIZE, u8Arr.length));
+                result += String.fromCharCode.apply(null, slice);
+                index += CHUNK_SIZE;
+            }
+            return btoa(result);
+        }
+
+        function addReceivedMasks(data) {
+            if (data.masks) {
+                const mask_list = data.masks;
+                console.log(mask_list.length, ' masks received with keys ', Object.keys(mask_list[0]));
+                mask_list.forEach((mask) => {
+                    const compressed = base64ToUint8Array(mask.segmentation);
+                    const raw = pako.inflate(compressed);
+                    const buffer = raw.buffer;
+                    const int32_array = new Int32Array(buffer);
+                    mask.segmentation = int32_array;
+                    mask.id = maskCounter++;
+                    mask.selected = true;
+                    allMasks.push(mask);
+                });
+            }
+        }
+
+        // =======================================================================
+        //                            MASK LIST UI
+        // =======================================================================
+        function updateMaskListUI() {
+            const ul = document.getElementById("maskList");
+            ul.innerHTML = "";
+            console.log('Updating mask list with ', allMasks.length, ' masks.')
+            for (let i = 0; i < allMasks.length; i++) {
+                const maskObj = allMasks[i];
+                const li = document.createElement("li");
+                li.className = "mask-list-item" + (maskObj.selected ? " selected" : "");
+                li.textContent = `Mask ${i}`;
+                li.onclick = () => {
+                    // Toggle selection
+                    maskObj.selected = !maskObj.selected;
+                    updateMaskListUI();
+                    updateMaskCanvas()
+                    draw();
+                };
+                ul.appendChild(li);
+            }
+        }
+
+        // =======================================================================
+        //                         COORDINATE HELPERS
+        // =======================================================================
+        function getMousePosCanvas(evt) {
+            const rect = canvas.getBoundingClientRect();
+            return [evt.clientX - rect.left, evt.clientY - rect.top];
+        }
+
+        // (image -> screen)
+        function applyTransform(x, y) {
+            return [
+                x * scale + offsetX,
+                y * scale + offsetY
+            ];
+        }
+
+        // (screen -> image)
+        function screenToImage(sx, sy) {
+            return [
+                (sx - offsetX) / scale,
+                (sy - offsetY) / scale
+            ];
+        }
+    </script>
+</body>
+
+</html>

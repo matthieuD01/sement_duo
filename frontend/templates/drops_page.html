@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>File Explorer</title>
+    <style>
+        body {
+            font-family: Helvetica;
+            font-size: 12px;
+            width: 900px;
+        }
+
+        table {
+            font-family: Helvetica;
+            font-size: 12px;
+        }
+
+        a {
+            color: red;
+            text-decoration: none;
+        }
+
+        h2 {
+            color: gray;
+        }
+
+        a:hover {
+            color: silver;
+        }
+
+        td {
+            min-width: 150px;
+        }
+
+        tr:nth-child(even) {
+            background-color: #EEE;
+        }
+
+        .right {
+            float: right;
+            width: 150px;
+        }
+
+        .main {
+            width: 750px;
+        }
+
+        .dropbox {
+            border: 1px solid #555;
+            padding: 10px;
+            background-color: #bbb;
+        }
+
+        .dropbox:hover {
+            background-color: #ccc;
+        }
+
+        .gothere {
+            outline: none;
+            text-decoration: underline black;
+            color: silver;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="wrapped">
+        <h1 id="title">File Explorer</h1>
+        <h2 id="sub">You are in <span id="breadcrumb"></span></h2>
+        <hr>
+        <div class="right">
+            <div id="drop-area-div" class="dropbox">
+                Click or Drag / Drop Files Here To Upload
+            </div>
+            <div id="cur_upload"></div>
+            <div id="queue_upload"></div>
+        </div>
+        <div class="main">
+            <div id="file-list">
+                <table id="file-table">
+                    <!-- File list will be dynamically inserted here -->
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        let currentPath = window.location.pathname.split("/").slice(1);
+        if (currentPath[1] == '') {
+            currentPath[1] = 'matthieu' // Needs a default folder, as you can't get the /drops/ file list. 
+        }
+        console.log('current path = ', window.location.pathname);
+
+        function updateBreadcrumb() {
+            let breadcrumb = "";
+            let path = "";
+            for (let i = 0; i < currentPath.length; i++) {
+                path += "/" + currentPath[i];
+                console.log('path is ', path, 'at i = ', i)
+                breadcrumb += `<a href="${path}">${currentPath[i]}</a>/`;
+            }
+            $("#breadcrumb").html(breadcrumb);
+        }
+
+        function handleFileClick(filePath) {
+            console.log('File clicked:', filePath);
+            window.parent.postMessage({ type: 'fileClicked', filePath: filePath }, '*');
+            // Implement your custom logic here
+        }
+
+        function fetchDirectory() {
+            const path_wo_drops = currentPath.slice(1)
+            $.ajax({
+                url: `/proxy/list/${path_wo_drops}`,
+                method: 'POST',
+                success: function (data) {
+                    let tableContent = "";
+                    if (data.length > 1) {
+                        data = data.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+                    }
+                    data.forEach(item => {
+                        let name = item.name.split("/").pop();
+                        let url = 'drops' + item.name;
+                        let size = formatSize(item.size);
+                        let mtime = new Date(item.mtime).toISOString();
+                        let row = `<tr data-is-dir="${item.is_dir}"><td><a href="${url}" class="file-link">${name}${item.is_dir ? '/' : ''}</a></td><td>${size}</td><td>${mtime}</td></tr>`;
+                        tableContent += row;
+                    });
+                    $("#file-table").html(tableContent);
+                    attachClickHandlers();
+                },
+                error: function (xhr, status, error) {
+                    console.error('Error fetching directory:', error);
+                }
+            });
+        }
+
+        function formatSize(size) {
+            if (size > 1e9) return (Math.round(size / 1e7) / 100) + " G";
+            if (size > 1e6) return (Math.round(size / 1e4) / 100) + " M";
+            if (size > 1e3) return (Math.round(size / 1e1) / 100) + " K";
+            return size + " B";
+        }
+
+        function attachClickHandlers() {
+            $(".file-link").on("click", function (event) {
+                event.preventDefault();
+                let filePath = $(this).attr("href");
+                let row = $(this).closest("tr");
+                let isDir = row.data("is-dir");
+                if (isDir) {
+                    console.log(`currentPath is ${currentPath} amd filepath is ${filePath}`)
+                    // It's a directory, update the path and fetch the directory
+                    currentPath = filePath.split("/");
+                    console.log('Now, currentPath is', currentPath);
+                    updateBreadcrumb();
+                    fetchDirectory();
+                } else {
+                    // It's a file, handle the file click
+                    handleFileClick(filePath);
+                }
+            });
+        }
+
+        $(document).ready(function () {
+            updateBreadcrumb();
+            fetchDirectory();
+            setInterval(fetchDirectory, 5000);
+        });
+    </script>
+</body>
+
+</html>
