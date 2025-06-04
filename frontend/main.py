@@ -112,7 +112,7 @@ async def read_root(request: Request):
 
 
 @app.get("/drops/{path:path}", response_class=HTMLResponse)
-async def read_root(request: Request):
+async def drops_root(request: Request):
     """
     Render a clone of Drops page. We pass the list of images to the template.
     """
@@ -291,7 +291,7 @@ def serve_image(path: str):
     return Response(content=content, media_type=media_type)
 
 @app.get("/imagesNoBanner/{path:path}")
-def serve_image(path: str):
+def serve_image_no_banner(path: str):
     logger.info(f'Image path is {path}')
     content = load_image(path)
     img_array = np.frombuffer(content, np.uint8)
@@ -319,14 +319,16 @@ def release_session(req: ReleaseSessionRequest):
     """
     if req.session_id in SESSIONS:
         payload = {"session_id": req.session_id}
-        resp = requests.post(f"{BACKEND_URL}/release_session",
-                             json=payload, timeout=300)
+        resp = requests.post(
+            f"{BACKEND_URL}/release_session", json=payload, timeout=300
+        )
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail=resp.text)
         del SESSIONS[req.session_id]
-        logger.info(f'Released session {req.session_id}')
-
-    return resp.json()  # { "status": "released" }
+        logger.info(f"Released session {req.session_id}")
+        return resp.json()  # { "status": "released" }
+    else:
+        raise HTTPException(status_code=404, detail="Invalid session_id")
 
 
 def load_image(img_path: str):
