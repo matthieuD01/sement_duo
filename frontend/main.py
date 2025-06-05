@@ -333,7 +333,7 @@ def load_image(img_path: str):
     """
     Loads an image from Drops stored at the given path.
     """
-    base_url = "https://drops.steingart.ceec.echem.io/"
+    base_url = DROPS_URL or ""
     if not img_path.startswith(base_url):
         img_path = base_url + img_path
     logger.info(f'Img path is {img_path}')
