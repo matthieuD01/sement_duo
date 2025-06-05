@@ -40,12 +40,12 @@ Then:
 ```
 USERNAME=""
 PASSWORD=""
-DROPS_URL="https://drops.steingart.ceec.echem.io/"
+DROPS_URL=""
 
-MODEL_CONFIG =    ""
-CHECKPOINT_PATH = ""
-MASKS_ROOT = "/matthieu/code/sement_duo/masks/"
-BACKEND_URL = "http://localhost:8001"
+MODEL_CONFIG=""
+CHECKPOINT_PATH=""
+MASKS_ROOT="/matthieu/code/sement_duo/masks/"
+BACKEND_URL="http://localhost:8001"
 ```
 Where MODEL_CONFIG and CHECKPOINT_PATH are the *absolute* paths to these files. Username and password are your log-ins to Drops. MASKS_ROOT is where the masks will be saved for all images.
 
